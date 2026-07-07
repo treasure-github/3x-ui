@@ -2,6 +2,7 @@ package controller
 
 import (
 	"bytes"
+	_ "embed"
 	"encoding/json"
 	htmlpkg "html"
 	"io/fs"
@@ -15,6 +16,9 @@ import (
 	"github.com/mhsanaei/3x-ui/v3/internal/logger"
 	"github.com/mhsanaei/3x-ui/v3/internal/web/session"
 )
+
+//go:embed mobile.html
+var mobileHTML []byte
 
 var distFS fs.FS
 
@@ -71,11 +75,48 @@ func withServerBasePath(spec []byte, basePath string) ([]byte, error) {
 	return json.Marshal(doc)
 }
 
+func isMobile(userAgent string) bool {
+	ua := strings.ToLower(userAgent)
+	return strings.Contains(ua, "android") ||
+		strings.Contains(ua, "iphone") ||
+		strings.Contains(ua, "ipad") ||
+		strings.Contains(ua, "ipod") ||
+		strings.Contains(ua, "windows phone") ||
+		strings.Contains(ua, "mobi")
+}
+
+func isLocalhost(c *gin.Context) bool {
+	ip := c.ClientIP()
+	if ip == "127.0.0.1" || ip == "::1" {
+		return true
+	}
+	remoteAddr := c.Request.RemoteAddr
+	if strings.HasPrefix(remoteAddr, "127.0.0.1:") || strings.HasPrefix(remoteAddr, "[::1]:") {
+		return true
+	}
+	return false
+}
+
 func serveDistPage(c *gin.Context, name string) {
-	body, err := fs.ReadFile(distFS, "dist/"+name)
-	if err != nil {
-		c.String(http.StatusInternalServerError, "missing embedded page: %s", name)
-		return
+	var body []byte
+	var err error
+
+	if name == "index.html" && isMobile(c.GetHeader("User-Agent")) && isLocalhost(c) {
+		body = make([]byte, len(mobileHTML))
+		copy(body, mobileHTML)
+
+		basePath := c.GetString("base_path")
+		if basePath == "" {
+			basePath = "/"
+		}
+		trimmedBasePath := strings.TrimSuffix(basePath, "/")
+		body = bytes.ReplaceAll(body, []byte("const contextPath = '/xm';"), []byte("const contextPath = '"+trimmedBasePath+"';"))
+	} else {
+		body, err = fs.ReadFile(distFS, "dist/"+name)
+		if err != nil {
+			c.String(http.StatusInternalServerError, "missing embedded page: %s", name)
+			return
+		}
 	}
 
 	basePath := c.GetString("base_path")

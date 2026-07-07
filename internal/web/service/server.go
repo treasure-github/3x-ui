@@ -1116,12 +1116,12 @@ func (s *ServerService) GetLogs(count string, level string, syslog string) []str
 		}
 
 		// Use hardcoded command with validated parameters
-		cmd := exec.CommandContext(context.Background(), "journalctl", "-u", "x-ui", "--no-pager", "-n", strconv.Itoa(countInt), "-p", level)
+		cmd := exec.Command("journalctl", "-u", "x-manager", "--no-pager", "-n", strconv.Itoa(countInt), "-p", level)
 		var out bytes.Buffer
 		cmd.Stdout = &out
 		err = cmd.Run()
 		if err != nil {
-			return []string{"Failed to run journalctl command! Make sure systemd is available and x-ui service is registered."}
+			return []string{"Failed to run journalctl command! Make sure systemd is available and x-manager service is registered."}
 		}
 		lines = strings.Split(out.String(), "\n")
 	} else {
@@ -1381,7 +1381,7 @@ func sanitizeBackupHost(host string) string {
 	}
 	out := strings.Trim(b.String(), ".-")
 	if out == "" {
-		return "x-ui"
+		return "x-manager"
 	}
 	return out
 }

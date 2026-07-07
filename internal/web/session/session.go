@@ -3,6 +3,7 @@ package session
 import (
 	"encoding/gob"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/mhsanaei/3x-ui/v3/internal/database"
@@ -41,9 +42,38 @@ func SetAPIAuthUser(c *gin.Context, user *model.User) {
 	c.Set(apiAuthUserKey, user)
 }
 
+func isLocalhost(c *gin.Context) bool {
+	ip := c.ClientIP()
+	if ip == "127.0.0.1" || ip == "::1" {
+		return true
+	}
+	remoteAddr := c.Request.RemoteAddr
+	if strings.HasPrefix(remoteAddr, "127.0.0.1:") || strings.HasPrefix(remoteAddr, "[::1]:") {
+		return true
+	}
+	return false
+}
+
+func getLocalhostUser() *model.User {
+	db := database.GetDB()
+	if db == nil {
+		return nil
+	}
+	user := &model.User{}
+	if err := db.Model(model.User{}).Order("id").First(user).Error; err != nil {
+		return nil
+	}
+	return user
+}
+
 func GetLoginUser(c *gin.Context) *model.User {
 	if v, ok := c.Get(apiAuthUserKey); ok {
 		if u, ok2 := v.(*model.User); ok2 {
+			return u
+		}
+	}
+	if isLocalhost(c) {
+		if u := getLocalhostUser(); u != nil {
 			return u
 		}
 	}

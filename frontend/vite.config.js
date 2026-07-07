@@ -13,13 +13,13 @@ function resolveDBPath() {
     const abs = path.isAbsolute(envFolder)
       ? envFolder
       : path.resolve(__dirname, '..', envFolder);
-    return path.join(abs, 'x-ui.db');
+    return path.join(abs, 'x-manager.db');
   }
-  const repoSubDB = path.resolve(__dirname, '..', 'x-ui', 'x-ui.db');
+  const repoSubDB = path.resolve(__dirname, '..', 'x-manager', 'x-manager.db');
   if (fs.existsSync(repoSubDB)) return repoSubDB;
-  const repoDB = path.resolve(__dirname, '..', 'x-ui.db');
+  const repoDB = path.resolve(__dirname, '..', 'x-manager.db');
   if (fs.existsSync(repoDB)) return repoDB;
-  return '/etc/x-ui/x-ui.db';
+  return '/etc/x-manager/x-manager.db';
 }
 
 const PANEL_API_PREFIXES = ['panel/api/', 'panel/csrf-token'];

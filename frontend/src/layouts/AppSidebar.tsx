@@ -267,7 +267,7 @@ export default function AppSidebar() {
       >
         <div className={`sider-brand${collapsed ? ' sider-brand-collapsed' : ''}`}>
           <div className="brand-block">
-            <span className="brand-text">{collapsed ? '3X' : '3X-UI'}</span>
+            <span className="brand-text">{collapsed ? 'XM' : 'X-Manager'}</span>
           </div>
           {!collapsed && (
             <div className="brand-actions">
@@ -305,7 +305,7 @@ export default function AppSidebar() {
           <VersionBadge version={panelVersion} collapsed={collapsed} />
         </div>
       </Layout.Sider>
-
+ 
       <Drawer
         placement="left"
         closable={false}
@@ -321,7 +321,7 @@ export default function AppSidebar() {
       >
         <div className="drawer-header">
           <div className="brand-block">
-            <span className="drawer-brand">3X-UI</span>
+            <span className="drawer-brand">X-Manager</span>
           </div>
           <div className="drawer-header-actions">
             <DocsButton ariaLabel={t('menu.docs') || 'Documentation'} />

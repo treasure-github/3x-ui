@@ -11,6 +11,7 @@ import (
 	"sync"
 
 	"github.com/mhsanaei/3x-ui/v3/internal/config"
+	"github.com/mhsanaei/3x-ui/v3/internal/database"
 	"github.com/mhsanaei/3x-ui/v3/internal/database/model"
 	"github.com/mhsanaei/3x-ui/v3/internal/logger"
 	"github.com/mhsanaei/3x-ui/v3/internal/util/json_util"
@@ -341,6 +342,169 @@ func (s *XrayService) GetXrayConfig() (*xray.Config, error) {
 		logger.Warning("read nodes for egress injection failed:", err)
 	} else {
 		injectNodeEgresses(xrayConfig, nodes)
+	}
+
+	// X-Manager Custom Expansion: Inject custom outbounds, balancers, routing rules, and observatory
+	db := database.GetDB()
+	var xmgrOutbounds []model.XmgrOutbound
+	if err := db.Find(&xmgrOutbounds).Error; err == nil && len(xmgrOutbounds) > 0 {
+		var xmgrOutboundList []any
+		for _, ob := range xmgrOutbounds {
+			outbound := map[string]any{
+				"protocol": ob.Protocol,
+				"tag":      ob.Tag,
+			}
+			if ob.Settings != "" {
+				var s map[string]any
+				if err := json.Unmarshal([]byte(ob.Settings), &s); err == nil {
+					outbound["settings"] = s
+				}
+			}
+			var ss map[string]any
+			if ob.StreamSettings != "" {
+				_ = json.Unmarshal([]byte(ob.StreamSettings), &ss)
+			}
+			if ob.DialerProxy != "" {
+				if ss == nil {
+					ss = make(map[string]any)
+				}
+				var sockopt map[string]any
+				if s, ok := ss["sockopt"].(map[string]any); ok {
+					sockopt = s
+				} else {
+					sockopt = make(map[string]any)
+				}
+				sockopt["dialerProxy"] = ob.DialerProxy
+				ss["sockopt"] = sockopt
+			}
+			if ss != nil {
+				outbound["streamSettings"] = ss
+			}
+			xmgrOutboundList = append(xmgrOutboundList, outbound)
+		}
+		var existingOutbounds []any
+		if len(xrayConfig.OutboundConfigs) > 0 {
+			_ = json.Unmarshal(xrayConfig.OutboundConfigs, &existingOutbounds)
+		}
+		mergedOutbounds := append(existingOutbounds, xmgrOutboundList...)
+		combined, _ := json.Marshal(mergedOutbounds)
+		xrayConfig.OutboundConfigs = json_util.RawMessage(combined)
+	}
+
+	// Inject Routing Rules and Balancers
+	var xmgrRules []model.XmgrRule
+	if err := db.Find(&xmgrRules).Error; err == nil && len(xmgrRules) > 0 {
+		var routing map[string]any
+		if len(xrayConfig.RouterConfig) > 0 {
+			_ = json.Unmarshal(xrayConfig.RouterConfig, &routing)
+		}
+		if routing == nil {
+			routing = make(map[string]any)
+		}
+		rules, _ := routing["rules"].([]any)
+
+		for _, r := range xmgrRules {
+			rule := map[string]any{
+				"type": r.Type,
+			}
+			if r.OutboundTag != "" {
+				rule["outboundTag"] = r.OutboundTag
+			}
+			if r.BalancerTag != "" {
+				rule["balancerTag"] = r.BalancerTag
+			}
+			if r.Domain != "" {
+				var d []string
+				if err := json.Unmarshal([]byte(r.Domain), &d); err == nil && len(d) > 0 {
+					rule["domain"] = d
+				}
+			}
+			if r.Ip != "" {
+				var ip []string
+				if err := json.Unmarshal([]byte(r.Ip), &ip); err == nil && len(ip) > 0 {
+					rule["ip"] = ip
+				}
+			}
+			if r.InboundTag != "" {
+				var in []string
+				if err := json.Unmarshal([]byte(r.InboundTag), &in); err == nil && len(in) > 0 {
+					rule["inboundTag"] = in
+				}
+			}
+			if r.Protocol != "" {
+				var p []string
+				if err := json.Unmarshal([]byte(r.Protocol), &p); err == nil && len(p) > 0 {
+					rule["protocol"] = p
+				}
+			}
+			if r.Network != "" {
+				rule["network"] = r.Network
+			}
+			if r.User != "" {
+				var u []string
+				if err := json.Unmarshal([]byte(r.User), &u); err == nil && len(u) > 0 {
+					rule["user"] = u
+				}
+			}
+			rules = append([]any{rule}, rules...)
+		}
+		routing["rules"] = rules
+
+		var xmgrBalancers []model.XmgrBalancer
+		if err := db.Find(&xmgrBalancers).Error; err == nil && len(xmgrBalancers) > 0 {
+			balancers, _ := routing["balancers"].([]any)
+			for _, b := range xmgrBalancers {
+				bal := map[string]any{
+					"tag":      b.Tag,
+					"strategy": map[string]any{"type": b.Strategy},
+				}
+				if b.Selectors != "" {
+					var s []string
+					if err := json.Unmarshal([]byte(b.Selectors), &s); err == nil && len(s) > 0 {
+						bal["selector"] = s
+					} else {
+						bal["selector"] = []string{"wjkc-placeholder"}
+					}
+				} else {
+					bal["selector"] = []string{"wjkc-placeholder"}
+				}
+				if b.Fallback != "" {
+					bal["fallback"] = b.Fallback
+				}
+				balancers = append(balancers, bal)
+			}
+			routing["balancers"] = balancers
+		}
+
+		newRouting, _ := json.Marshal(routing)
+		xrayConfig.RouterConfig = json_util.RawMessage(newRouting)
+	}
+
+	// Configure Observatory and Metrics
+	if len(xrayConfig.Observatory) == 0 {
+		obs := map[string]any{
+			"subjectSelector": []string{"wjkc"},
+			"probeUrl":        "https://www.google.com/generate_204",
+			"probeInterval":   "120m",
+		}
+		var selectors []string
+		for _, ob := range xmgrOutbounds {
+			selectors = append(selectors, ob.Tag)
+		}
+		if len(selectors) > 0 {
+			obs["subjectSelector"] = selectors
+		}
+		combinedObs, _ := json.Marshal(obs)
+		xrayConfig.Observatory = json_util.RawMessage(combinedObs)
+	}
+
+	if len(xrayConfig.Metrics) == 0 {
+		m := map[string]any{
+			"listen": "127.0.0.1:10087",
+			"tag":    "metrics",
+		}
+		combinedM, _ := json.Marshal(m)
+		xrayConfig.Metrics = json_util.RawMessage(combinedM)
 	}
 
 	return xrayConfig, nil
@@ -822,6 +986,29 @@ func (s *XrayService) GetXrayTraffic() ([]*xray.Traffic, []*xray.ClientTraffic, 
 		return nil, nil, err
 	}
 	return traffic, clientTraffic, nil
+}
+
+func (s *XrayService) GetActiveBalancerTarget(balancerTag string) (string, error) {
+	if !s.IsXrayRunning() {
+		return "", errors.New("xray is not running")
+	}
+	apiPort := p.GetAPIPort()
+	if err := s.xrayAPI.Init(apiPort); err != nil {
+		return "", err
+	}
+	defer s.xrayAPI.Close()
+
+	info, err := s.xrayAPI.GetBalancerInfo(balancerTag)
+	if err != nil {
+		return "", err
+	}
+	if info.Override != "" {
+		return info.Override, nil
+	}
+	if len(info.Selected) > 0 {
+		return info.Selected[0], nil
+	}
+	return "", fmt.Errorf("no target selected")
 }
 
 // GetOnlineUsers returns connection-based online users (email + source IPs)

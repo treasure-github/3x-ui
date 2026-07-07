@@ -161,7 +161,7 @@ func GetDBFolderPath() string {
 	if runtime.GOOS == "windows" {
 		return getBaseDir()
 	}
-	return "/etc/x-ui"
+	return "/etc/x-manager"
 }
 
 // GetDBPath returns the full path to the database file.
@@ -200,9 +200,9 @@ func GetEnvFilePaths() []string {
 		return nil
 	}
 	return []string{
-		"/etc/default/x-ui",
-		"/etc/conf.d/x-ui",
-		"/etc/sysconfig/x-ui",
+		"/etc/default/x-manager",
+		"/etc/conf.d/x-manager",
+		"/etc/sysconfig/x-manager",
 	}
 }
 
@@ -216,12 +216,12 @@ func GetLogFolder() string {
 	// scatters a log/ directory through the source tree (one per tested package).
 	// Redirect test runs to a shared temp folder so the source tree stays clean.
 	if testing.Testing() {
-		return filepath.Join(os.TempDir(), "3x-ui-test-log")
+		return filepath.Join(os.TempDir(), "x-manager-test-log")
 	}
 	if runtime.GOOS == "windows" {
 		return filepath.Join(".", "log")
 	}
-	return "/var/log/x-ui"
+	return "/var/log/x-manager"
 }
 
 func copyFile(src, dst string) error {
@@ -246,23 +246,40 @@ func copyFile(src, dst string) error {
 }
 
 func init() {
-	if runtime.GOOS != "windows" {
-		return
-	}
 	if os.Getenv("XUI_DB_FOLDER") != "" {
 		return
 	}
-	oldDBFolder := "/etc/x-ui"
-	oldDBPath := fmt.Sprintf("%s/%s.db", oldDBFolder, GetName())
-	newDBFolder := GetDBFolderPath()
-	newDBPath := fmt.Sprintf("%s/%s.db", newDBFolder, GetName())
-	_, err := os.Stat(newDBPath)
-	if err == nil {
-		return // new exists
+	if runtime.GOOS == "windows" {
+		oldDBFolder := "/etc/x-ui"
+		oldDBPath := fmt.Sprintf("%s/%s.db", oldDBFolder, "x-ui")
+		newDBFolder := GetDBFolderPath()
+		newDBPath := fmt.Sprintf("%s/%s.db", newDBFolder, GetName())
+		_, err := os.Stat(newDBPath)
+		if err == nil {
+			return // new exists
+		}
+		_, err = os.Stat(oldDBPath)
+		if os.IsNotExist(err) {
+			return // old does not exist
+		}
+		_ = copyFile(oldDBPath, newDBPath) // ignore error
+	} else {
+		// Linux smooth migration for x-manager
+		oldDBFolder := "/etc/x-ui"
+		oldDBPath := fmt.Sprintf("%s/%s.db", oldDBFolder, "x-ui")
+		newDBFolder := "/etc/x-manager"
+		newDBPath := fmt.Sprintf("%s/%s.db", newDBFolder, GetName())
+		
+		if _, err := os.Stat(newDBPath); err == nil {
+			return // new database already exists, skip migration
+		}
+		
+		if _, err := os.Stat(oldDBPath); err == nil {
+			_ = os.MkdirAll(newDBFolder, 0755)
+			_ = copyFile(oldDBPath, newDBPath)
+			// copy other assets if possible
+			_ = copyFile(filepath.Join(oldDBFolder, "x-ui.cert"), filepath.Join(newDBFolder, "x-manager.cert"))
+			_ = copyFile(filepath.Join(oldDBFolder, "x-ui.key"), filepath.Join(newDBFolder, "x-manager.key"))
+		}
 	}
-	_, err = os.Stat(oldDBPath)
-	if os.IsNotExist(err) {
-		return // old does not exist
-	}
-	_ = copyFile(oldDBPath, newDBPath) // ignore error
 }

@@ -1129,3 +1129,43 @@ func MergeClientRecord(existing *ClientRecord, incoming *ClientRecord) []ClientM
 	}
 	return conflicts
 }
+
+type XmgrOutbound struct {
+	Id              int    `json:"id" gorm:"primaryKey;autoIncrement"`
+	Protocol        string `json:"protocol"`
+	Settings        string `json:"settings"`
+	StreamSettings  string `json:"streamSettings" gorm:"column:stream_settings"`
+	Tag             string `json:"tag" gorm:"uniqueIndex"`
+	DialerProxy     string `json:"dialerProxy" gorm:"column:dialer_proxy"`
+	IsSubscription  int    `json:"isSubscription" gorm:"column:is_subscription;default:0"`
+	SubscriptionUrl string `json:"subscriptionUrl" gorm:"column:subscription_url"`
+}
+
+func (XmgrOutbound) TableName() string { return "outbounds" }
+
+type XmgrBalancer struct {
+	Id        int    `json:"id" gorm:"primaryKey;autoIncrement"`
+	Tag       string `json:"tag" gorm:"uniqueIndex"`
+	Selectors string `json:"selectors"` // JSON Array
+	Strategy  string `json:"strategy" gorm:"default:leastPing"`
+	Fallback  string `json:"fallback"`
+}
+
+func (XmgrBalancer) TableName() string { return "balancers" }
+
+type XmgrRule struct {
+	Id          int    `json:"id" gorm:"primaryKey;autoIncrement"`
+	Desc        string `json:"desc"`
+	Type        string `json:"type" gorm:"default:field"`
+	Domain      string `json:"domain"` // JSON Array
+	Ip          string `json:"ip"`     // JSON Array
+	OutboundTag string `json:"outboundTag" gorm:"column:outbound_tag"`
+	BalancerTag string `json:"balancerTag" gorm:"column:balancer_tag"`
+	InboundTag  string `json:"inboundTag" gorm:"column:inbound_tag"` // JSON Array
+	Protocol    string `json:"protocol"`                            // JSON Array
+	Network     string `json:"network"`
+	User        string `json:"user"` // JSON Array
+}
+
+func (XmgrRule) TableName() string { return "routing_rules" }
+

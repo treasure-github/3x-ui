@@ -1,11 +1,14 @@
 package xray
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -21,6 +24,77 @@ import (
 	"github.com/mhsanaei/3x-ui/v3/internal/logger"
 	"github.com/mhsanaei/3x-ui/v3/internal/util/common"
 )
+
+var (
+	XrayLogChan   = make(chan string, 2000)
+	AccessLogPath string
+	ErrorLogPath  string
+	accessFile    *os.File
+	errorFile     *os.File
+	logFileMu     sync.Mutex
+)
+
+func isPortConflict(listen string, port int) bool {
+	if listen == "" {
+		listen = "0.0.0.0"
+	}
+	addr := fmt.Sprintf("%s:%d", listen, port)
+	l, err := net.Listen("tcp", addr)
+	if err != nil {
+		return true
+	}
+	_ = l.Close()
+
+	addrUDP, err := net.ResolveUDPAddr("udp", addr)
+	if err == nil {
+		conn, err := net.ListenUDP("udp", addrUDP)
+		if err == nil {
+			_ = conn.Close()
+		} else {
+			return true
+		}
+	}
+	return false
+}
+
+func (p *process) readLogPipe(reader io.ReadCloser, logType string) {
+	defer reader.Close()
+	scanner := bufio.NewScanner(reader)
+	for scanner.Scan() {
+		line := scanner.Text()
+
+		// Write to original 3x-ui LogWriter to format logs and notify UI
+		_, _ = p.logWriter.Write([]byte(line + "\n"))
+
+		// Write to access/error log files and flush sync
+		logFileMu.Lock()
+		if logType == "stdout" {
+			if accessFile != nil {
+				_, _ = accessFile.WriteString(line + "\n")
+				_ = accessFile.Sync()
+			}
+		} else {
+			if errorFile != nil {
+				_, _ = errorFile.WriteString(line + "\n")
+				_ = errorFile.Sync()
+			}
+		}
+		logFileMu.Unlock()
+
+		// Stream access logs to Websocket channel for HUD
+		if logType == "stdout" {
+			select {
+			case XrayLogChan <- line:
+			default:
+				select {
+				case <-XrayLogChan:
+				default:
+				}
+				XrayLogChan <- line
+			}
+		}
+	}
+}
 
 // GetBinaryName returns the Xray binary filename for the current OS and architecture.
 func GetBinaryName() string {
@@ -503,6 +577,46 @@ func (p *process) Start() (err error) {
 		}
 	}()
 
+	// 0. Port Conflict Detection (Probe)
+	for _, inbound := range p.config.InboundConfigs {
+		if inbound.Port > 0 {
+			listenStr := strings.Trim(string(inbound.Listen), "\"")
+			if isPortConflict(listenStr, inbound.Port) {
+				return fmt.Errorf("port conflict detected: %d is already in use by another process", inbound.Port)
+			}
+		}
+	}
+
+	// 1. Resolve custom access/error log file paths from config
+	AccessLogPath, _ = GetAccessLogPath()
+	if AccessLogPath == "" {
+		AccessLogPath = filepath.Join(config.GetLogFolder(), "access.log")
+	}
+	ErrorLogPath = filepath.Join(filepath.Dir(AccessLogPath), "error.log")
+
+	// 2. Open log files for writing (append mode)
+	logFileMu.Lock()
+	if accessFile != nil {
+		_ = accessFile.Close()
+		accessFile = nil
+	}
+	if errorFile != nil {
+		_ = errorFile.Close()
+		errorFile = nil
+	}
+	_ = os.MkdirAll(filepath.Dir(AccessLogPath), 0755)
+	if f, err := os.OpenFile(AccessLogPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644); err == nil {
+		accessFile = f
+	} else {
+		logger.Warningf("Failed to open access log file %s: %v", AccessLogPath, err)
+	}
+	if f, err := os.OpenFile(ErrorLogPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644); err == nil {
+		errorFile = f
+	} else {
+		logger.Warningf("Failed to open error log file %s: %v", ErrorLogPath, err)
+	}
+	logFileMu.Unlock()
+
 	data, err := json.MarshalIndent(p.config, "", "  ")
 	if err != nil {
 		return common.NewErrorf("Failed to generate XRAY configuration files: %v", err)
@@ -522,14 +636,24 @@ func (p *process) Start() (err error) {
 		return common.NewErrorf("Failed to write configuration file: %v", err)
 	}
 
-	cmd := exec.CommandContext(context.Background(), GetBinaryPath(), "-c", configPath)
-	cmd.Stdout = p.logWriter
-	cmd.Stderr = p.logWriter
+	cmd := exec.Command(GetBinaryPath(), "-c", configPath)
+	stdoutPipe, err := cmd.StdoutPipe()
+	if err != nil {
+		return fmt.Errorf("failed to create stdout pipe: %w", err)
+	}
+	stderrPipe, err := cmd.StderrPipe()
+	if err != nil {
+		return fmt.Errorf("failed to create stderr pipe: %w", err)
+	}
 
 	err = p.startCommand(cmd)
 	if err != nil {
 		return err
 	}
+
+	// Spin off log pipe hijack readers
+	go p.readLogPipe(stdoutPipe, "stdout")
+	go p.readLogPipe(stderrPipe, "stderr")
 
 	p.refreshVersion()
 	p.refreshAPIPort()
@@ -640,6 +764,17 @@ func (p *process) waitForCommand(cmd *exec.Cmd, done chan struct{}) {
 
 // Stop terminates the running Xray process.
 func (p *process) Stop() error {
+	logFileMu.Lock()
+	if accessFile != nil {
+		_ = accessFile.Close()
+		accessFile = nil
+	}
+	if errorFile != nil {
+		_ = errorFile.Close()
+		errorFile = nil
+	}
+	logFileMu.Unlock()
+
 	if !p.IsRunning() {
 		return errors.New("xray is not running")
 	}

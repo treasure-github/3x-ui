@@ -27,7 +27,7 @@ import (
 	"github.com/mhsanaei/3x-ui/v3/internal/xray"
 
 	"gorm.io/driver/postgres"
-	"gorm.io/driver/sqlite"
+	"github.com/glebarez/sqlite"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
 )
@@ -81,6 +81,9 @@ func initModels() error {
 		&model.NodeClientIp{},
 		&model.ClientGlobalTraffic{},
 		&model.OutboundSubscription{},
+		&model.XmgrOutbound{},
+		&model.XmgrBalancer{},
+		&model.XmgrRule{},
 	}
 	for _, mdl := range models {
 		if IsPostgres() && postgresModelSettled(mdl) {
@@ -1613,6 +1616,35 @@ func InitDB(dbPath string) error {
 	if err := initUser(); err != nil {
 		return err
 	}
+
+	// X-Manager Configuration Takeover: run when inbounds and custom outbounds tables are empty
+	var inboundCount int64
+	db.Model(&model.Inbound{}).Count(&inboundCount)
+	var xmgrOutboundCount int64
+	db.Model(&model.XmgrOutbound{}).Count(&xmgrOutboundCount)
+	if inboundCount == 0 && xmgrOutboundCount == 0 {
+		candidates := []string{
+			"/etc/x-manager/config.json",
+			"/usr/local/x-manager/config.json",
+			"/etc/x-ui/config.json",
+			"/usr/local/x-ui/config.json",
+		}
+		takenOver := false
+		for _, p := range candidates {
+			if _, err := os.Stat(p); err == nil {
+				if err := LegacyTakeover(p); err == nil {
+					takenOver = true
+					break
+				}
+			}
+		}
+		if !takenOver {
+			db.Create(&model.XmgrOutbound{Protocol: "freedom", Tag: "freedom", Settings: "{}", StreamSettings: "{}"})
+			db.Create(&model.XmgrOutbound{Protocol: "blackhole", Tag: "blocked", Settings: "{}", StreamSettings: "{}"})
+			db.Create(&model.XmgrBalancer{Tag: "wjkc-balancer", Selectors: "[]", Strategy: "leastPing"})
+		}
+	}
+
 	return runSeeders(isUsersEmpty)
 }
 

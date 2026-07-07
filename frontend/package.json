@@ -1,9 +1,9 @@
 {
-  "name": "3x-ui-frontend",
+  "name": "x-manager-frontend",
   "private": true,
   "version": "0.4.1",
   "type": "module",
-  "description": "3x-ui panel frontend (React 19 + Ant Design 6 + Vite 8).",
+  "description": "x-manager panel frontend (React 19 + Ant Design 6 + Vite 8).",
   "engines": {
     "node": ">=22.0.0",
     "npm": ">=10.0.0"
@@ -17,7 +17,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "gen": "npm run gen:zod && npm run gen:api",
-    "gen:api": "node --experimental-strip-types --disable-warning=ExperimentalWarning scripts/build-openapi.mjs",
+    "gen:api": "tsx scripts/build-openapi.mjs",
     "gen:zod": "cd .. && go run ./tools/openapigen"
   },
   "dependencies": {
@@ -57,6 +57,7 @@
     "eslint-plugin-react-hooks": "^7.1.1",
     "globals": "^17.7.0",
     "jsdom": "^29.1.1",
+    "tsx": "^4.22.4",
     "typescript": "^6.0.3",
     "typescript-eslint": "^8.62.1",
     "vite": "8.1.3",

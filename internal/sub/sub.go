@@ -286,6 +286,11 @@ func (s *Server) Start() (err error) {
 	if err != nil {
 		return err
 	}
+	if envSubPort := os.Getenv("XUI_SUB_PORT"); envSubPort != "" {
+		if p, err := strconv.Atoi(envSubPort); err == nil && p > 0 {
+			port = p
+		}
+	}
 
 	listenAddr := net.JoinHostPort(listen, strconv.Itoa(port))
 	listener, err := (&net.ListenConfig{}).Listen(context.Background(), "tcp", listenAddr)
